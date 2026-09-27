@@ -6,7 +6,7 @@
         <p class="page-desc">维护调度指令，围绕指令编号、调度机构、指令内容、下发时间做登记、筛选与状态流转。</p>
       </div>
       <div class="page-actions">
-        <button class="btn primary" type="button" @click="openCreate">登记调度指令</button>
+        <button class="btn primary" type="button" @click="showCreate = !showCreate">登记调度指令</button>
         <button class="btn" type="button" @click="exportRows">导出并网调度清单</button>
       </div>
     </header>
@@ -18,10 +18,25 @@
       </article>
     </div>
 
-    <form class="filter-bar" @submit.prevent="reload">
-      <label v-for="field in filterFields" :key="field" class="filter-item">
+    <form v-if="showCreate" class="filter-bar" @submit.prevent="submitCreate">
+      <label v-for="field in createFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
-        <input v-model="filters[field]" :placeholder="`按${field}检索`" />
+        <input v-model="createForm[field]" :placeholder="`请输入${field}`" />
+      </label>
+      <button class="btn primary" type="submit">提交登记</button>
+    </form>
+
+    <form class="filter-bar" @submit.prevent="reload">
+      <label class="filter-item">
+        <span>指令编号</span>
+        <input v-model="keyword" placeholder="按指令编号检索" />
+      </label>
+      <label class="filter-item">
+        <span>指令状态</span>
+        <select v-model="statusFilter">
+          <option value="">全部状态</option>
+          <option v-for="item in statuses" :key="item" :value="item">{{ item }}</option>
+        </select>
       </label>
       <button class="btn" type="submit">查询</button>
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
@@ -31,22 +46,21 @@
       <thead>
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
-          <th>可执行动作</th>
+          <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td
+            v-for="column in columns"
+            :key="column"
+            :class="{ 'status-abnormal': column === '指令状态' && row.abnormal }"
+          >
+            {{ row[column] ?? '—' }}
+          </td>
           <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
-            </button>
+            <button class="link" type="button" @click="goDetail(row)">详情</button>
+            <button class="link" type="button" @click="goReceipt(row)">回执</button>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -57,32 +71,44 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条并网调度记录</span>
+      <span v-if="noticeMessage" class="ok-text">{{ noticeMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { request } from '@/api/client'
 
-type Row = Record<string, string | number | null>
+type Row = Record<string, string | number | boolean | null>
 
 const ENDPOINT = '/api/grid_connect'
 const columns = ["指令编号", "调度机构", "指令内容", "下发时间", "执行截止", "执行人员", "反馈情况", "指令状态"]
-const actions = ["接收指令", "确认执行", "反馈结果"]
 const statuses = ["待接收", "已接收", "已执行", "已反馈"]
-const stats = [{"label": "待执行指令", "value": 0}, {"label": "已执行指令", "value": 0}, {"label": "待反馈指令", "value": 0}]
+const createFields = ["指令编号", "调度机构", "指令内容", "下发时间", "执行截止", "执行人员"]
 
+const router = useRouter()
 const rows = ref<Row[]>([])
 const total = ref(0)
+const keyword = ref('')
+const statusFilter = ref('')
 const errorMessage = ref('')
-const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+const noticeMessage = ref('')
+const showCreate = ref(false)
+const createForm = reactive<Record<string, string>>({})
+
+const stats = computed(() => [
+  { label: '待执行指令', value: rows.value.filter((row) => row.status === '待接收' || row.status === '已接收').length },
+  { label: '已执行指令', value: rows.value.filter((row) => row.status === '已执行' || row.status === '已反馈').length },
+  { label: '超期指令', value: rows.value.filter((row) => row.abnormal).length },
+])
 
 function resetFilters() {
-  filters.value = {}
+  keyword.value = ''
+  statusFilter.value = ''
   void reload()
 }
 
@@ -90,35 +116,47 @@ function exportRows() {
   window.open(`${ENDPOINT}/export`, '_blank')
 }
 
-function openCreate() {
-  errorMessage.value = '调度指令登记入口尚未接入审批流'
+function goDetail(row: Row) {
+  void router.push(`/grid_connect/${row.id}`)
 }
 
-async function runAction(action: string, row: Row) {
+function goReceipt(row: Row) {
+  void router.push(`/grid_connect/${row.id}/receipt`)
+}
+
+async function submitCreate() {
   errorMessage.value = ''
+  noticeMessage.value = ''
   try {
-    const response = await request(`${ENDPOINT}/${row.id}/actions`, {
+    const response = await request(ENDPOINT, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ values: { ...createForm } }),
     })
-    if (!response.ok) {
-      throw new Error('并网调度动作未生效，请稍后重试')
+    const payload = await response.json()
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload?.message ?? payload?.detail ?? '调度指令登记失败')
     }
+    noticeMessage.value = payload.message ?? '调度指令已登记'
+    showCreate.value = false
+    Object.keys(createForm).forEach((field) => delete createForm[field])
     await reload()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '并网调度操作失败'
+    errorMessage.value = error instanceof Error ? error.message : '调度指令登记失败'
   }
 }
 
 async function reload() {
   errorMessage.value = ''
-  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
+  const query = new URLSearchParams()
+  if (keyword.value.trim()) query.set('keyword', keyword.value.trim())
+  if (statusFilter.value) query.set('status', statusFilter.value)
+  query.set('size', '200')
   try {
-    const response = await request(`${ENDPOINT}?${query}`)
-    if (!response.ok) {
-      throw new Error('调度指令列表读取失败')
-    }
+    const response = await request(`${ENDPOINT}?${query.toString()}`)
     const payload = await response.json()
+    if (!response.ok) {
+      throw new Error(payload?.detail ?? '调度指令列表读取失败')
+    }
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
   } catch (error) {

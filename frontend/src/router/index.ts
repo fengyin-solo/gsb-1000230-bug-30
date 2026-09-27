@@ -13,6 +13,8 @@ const Switchgear = () => import('@/views/switchgear/index.vue')
 const Meter = () => import('@/views/meter/index.vue')
 const Weather = () => import('@/views/weather/index.vue')
 const GridConnect = () => import('@/views/grid_connect/index.vue')
+const GridConnectDetail = () => import('@/views/grid_connect/Detail.vue')
+const GridConnectReceipt = () => import('@/views/grid_connect/Receipt.vue')
 const Cable = () => import('@/views/cable/index.vue')
 const Security = () => import('@/views/security/index.vue')
 const Maintenance = () => import('@/views/maintenance/index.vue')
@@ -36,6 +38,8 @@ const router = createRouter({
     { path: '/meter', name: 'meter', component: Meter },
     { path: '/weather', name: 'weather', component: Weather },
     { path: '/grid_connect', name: 'grid_connect', component: GridConnect },
+    { path: '/grid_connect/:id', name: 'grid_connect_detail', component: GridConnectDetail },
+    { path: '/grid_connect/:id/receipt', name: 'grid_connect_receipt', component: GridConnectReceipt },
     { path: '/cable', name: 'cable', component: Cable },
     { path: '/security', name: 'security', component: Security },
     { path: '/maintenance', name: 'maintenance', component: Maintenance },
